@@ -1,0 +1,1047 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Balance al Dia - Reporte Gerencial</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://alcdn.msauth.net/browser/2.35.0/js/msal-browser.min.js"></script>
+<style>
+  :root {
+    --bg: #f5f7fa; --card: #ffffff; --text: #1f2937; --muted: #6b7280;
+    --accent: #2563eb; --border: #e5e7eb; --green: #16a34a; --red: #dc2626;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif; background: var(--bg); color: var(--text); }
+  header { padding: 20px 32px; background: var(--card); border-bottom: 1px solid var(--border); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; position: sticky; top:0; z-index: 20; }
+  header h1 { margin: 0 0 4px 0; font-size: 21px; }
+  header .fecha { color: var(--muted); font-size: 13px; }
+  header .estado-onedrive { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .header-botones { display:flex; gap:8px; flex-wrap:wrap; }
+  main { padding: 24px 32px; max-width: 1200px; margin: 0 auto; }
+  button { font: inherit; cursor: pointer; }
+  .btn { background: var(--accent); color:#fff; border:none; border-radius:8px; padding:8px 14px; font-size:13px; }
+  .btn.secundario { background: var(--card); color: var(--text); border:1px solid var(--border); }
+  .btn.peligro { background:#fef2f2; color:#b91c1c; border:1px solid #fecaca; }
+
+  /* Dropzone */
+  #dropzone { border: 2px dashed var(--border); border-radius: 14px; padding: 48px 24px; text-align:center; background: var(--card); cursor: pointer; transition: border-color .15s, background .15s; }
+  #dropzone.arrastrando { border-color: var(--accent); background: #eff6ff; }
+  #dropzone h2 { margin: 0 0 8px 0; font-size: 18px; }
+  #dropzone p { color: var(--muted); font-size: 13px; margin: 4px 0; }
+  #dropzone .icono { font-size: 36px; margin-bottom: 8px; }
+  #inputArchivos { display:none; }
+  #estadoArchivos { max-width: 640px; margin: 18px auto 0; text-align:left; font-size: 13px; }
+  #estadoArchivos .item { display:flex; align-items:center; gap:8px; padding:6px 10px; border-radius:8px; margin-bottom:6px; background:#f9fafb; }
+  #estadoArchivos .item.ok { color: var(--green); }
+  #estadoArchivos .item.falta { color: var(--muted); background:transparent; border:1px dashed var(--border); }
+  #errores { max-width: 640px; margin: 14px auto 0; text-align:left; }
+  .error-box { background:#fef2f2; border:1px solid #fecaca; color:#b91c1c; border-radius:8px; padding:10px 14px; font-size:13px; margin-bottom:8px; }
+
+  /* Panel de archivos guardados */
+  .panel-archivos { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; margin-bottom: 20px; max-width: 640px; }
+  .panel-archivos-header { display:flex; justify-content:space-between; align-items:center; margin-bottom: 10px; }
+  .panel-archivos-header h3 { margin:0; font-size:15px; }
+  .panel-archivos-nota { font-size:12px; color:var(--muted); margin: 0 0 12px 0; }
+  .fila-archivo { display:flex; justify-content:space-between; align-items:center; gap:10px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .fila-archivo:last-of-type { border-bottom: none; }
+  .fa-info { min-width:0; }
+  .fa-nombre { font-size:13px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .fa-fecha { font-size:11px; color: var(--muted); }
+  .fa-reemplazar { position:relative; overflow:hidden; white-space:nowrap; }
+  .fa-reemplazar input[type=file] { position:absolute; inset:0; opacity:0; cursor:pointer; width:100%; }
+  .panel-archivos-footer { margin-top: 14px; text-align:right; }
+
+  .oculto { display:none !important; }
+
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
+  .kpi-card { background: var(--card); border: 1px solid var(--border); border-left: 4px solid var(--kpi-color, var(--border)); border-radius: 10px; padding: 16px 18px; cursor: pointer; transition: box-shadow .15s, border-color .15s; }
+  .kpi-card:hover { box-shadow: 0 4px 14px rgba(0,0,0,.08); }
+  .kpi-label { font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  .kpi-value { font-size: 20px; font-weight: 700; }
+  .kpi-delta { font-size: 12px; margin-top: 4px; }
+  .kpi-delta.up { color: var(--green); }
+  .kpi-delta.down { color: var(--red); }
+  .kpi-fuente { font-size: 11px; color: var(--muted); margin-top: 6px; }
+  .kpi-hint { font-size: 11px; color: var(--accent); margin-top: 6px; }
+
+  .resumen { display:flex; gap:16px; margin-bottom:16px; flex-wrap: wrap; }
+  .resumen div { background: var(--card); border:1px solid var(--border); border-radius:10px; padding: 14px 18px; flex:1; min-width: 200px; }
+  .resumen .label { font-size:12px; color:var(--muted); }
+  .resumen .valor { font-size:20px; font-weight:700; }
+  .resumen .balance .valor { color: var(--green); }
+
+  .chart-wrap { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; margin-bottom: 24px; }
+  .chart-wrap summary { cursor:pointer; font-weight:600; font-size: 15px; list-style:none; padding: 2px 0; }
+  .chart-wrap summary::-webkit-details-marker { display:none; }
+  .chart-wrap summary::before { content: "▸"; display:inline-block; margin-right:8px; color: var(--accent); transition: transform .15s; }
+  .chart-wrap[open] summary::before { transform: rotate(90deg); }
+  .composicion-grid { display:grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; align-items:start; }
+  @media (max-width: 720px) { .composicion-grid { grid-template-columns: 1fr; } }
+
+  /* Listas de composicion (reemplazan las graficas) */
+  .comp-list { margin-top: 12px; }
+  .comp-row { margin-bottom: 10px; }
+  .comp-row:last-child { margin-bottom: 0; }
+  .comp-row-top { display:flex; justify-content:space-between; gap:10px; font-size: 13px; margin-bottom: 4px; }
+  .comp-row-top .nombre { color: var(--text); }
+  .comp-row-top .monto { font-variant-numeric: tabular-nums; font-weight:600; white-space:nowrap; }
+  .comp-row-top .pct { color: var(--muted); font-weight:400; margin-left:4px; }
+  .comp-bar-bg { background: #eef0f3; border-radius: 6px; height: 8px; overflow:hidden; }
+  .comp-bar-fill { height: 100%; border-radius: 6px; }
+  .comp-mas { font-size: 12px; color: var(--muted); margin-top: 6px; font-style: italic; }
+
+  .seccion { background: var(--card); border: 1px solid var(--border); border-top: 4px solid var(--sec-color, var(--border)); border-radius: 10px; padding: 18px 20px; margin-bottom: 20px; scroll-margin-top: 90px; }
+  .seccion-header { display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:8px; margin-bottom: 6px; }
+  .seccion-header h3 { margin: 0; font-size: 17px; }
+  .seccion-header .total { font-size: 18px; font-weight: 700; }
+  .seccion .fuente { font-size: 11px; color: var(--muted); margin-bottom: 12px; }
+  .seccion .sin-desglose { color: var(--muted); font-style: italic; font-size: 13px; padding: 12px 0; }
+
+  .vacio { color: var(--muted); font-style: italic; }
+
+  footer { padding: 16px 32px; color: var(--muted); font-size: 12px; }
+  #app { display:none; }
+  #app.visible { display:block; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Balance al Dia - Reporte Gerencial</h1>
+    <div class="fecha" id="fechaCorte">Sin datos cargados</div>
+    <div class="estado-onedrive" id="estadoOneDrive"></div>
+  </div>
+  <div class="header-botones">
+    <button class="btn secundario oculto" id="btnOneDrive">Conectar con OneDrive</button>
+    <button class="btn secundario oculto" id="btnArchivos">Archivos cargados</button>
+  </div>
+</header>
+<main>
+
+  <div id="panelArchivos" class="panel-archivos oculto">
+    <div class="panel-archivos-header">
+      <h3>Archivos configurados</h3>
+      <button class="btn secundario" id="btnCerrarPanel">Cerrar</button>
+    </div>
+    <p class="panel-archivos-nota">Guardados en este navegador como respaldo local. Si OneDrive esta conectado, los datos se actualizan solos desde ahi; usa "Reemplazar" solo si necesitas forzar un archivo distinto en este equipo.</p>
+
+    <div class="fila-archivo">
+      <div class="fa-info">
+        <div class="fa-nombre" id="nombre_bancos">-</div>
+        <div class="fa-fecha" id="fecha_bancos"></div>
+      </div>
+      <label class="btn secundario fa-reemplazar">Reemplazar
+        <input type="file" accept=".xlsx,.xlsm,.xls" data-tipo="bancos" class="input-reemplazo">
+      </label>
+    </div>
+    <div class="fila-archivo">
+      <div class="fa-info">
+        <div class="fa-nombre" id="nombre_inventario">-</div>
+        <div class="fa-fecha" id="fecha_inventario"></div>
+      </div>
+      <label class="btn secundario fa-reemplazar">Reemplazar
+        <input type="file" accept=".xlsx,.xlsm,.xls" data-tipo="inventario" class="input-reemplazo">
+      </label>
+    </div>
+    <div class="fila-archivo">
+      <div class="fa-info">
+        <div class="fa-nombre" id="nombre_pdf">-</div>
+        <div class="fa-fecha" id="fecha_pdf"></div>
+      </div>
+      <label class="btn secundario fa-reemplazar">Reemplazar
+        <input type="file" accept=".pdf" data-tipo="pdf" class="input-reemplazo">
+      </label>
+    </div>
+
+    <div class="panel-archivos-footer">
+      <button class="btn peligro" id="btnBorrarTodo">Borrar todo y empezar de nuevo</button>
+    </div>
+  </div>
+
+  <div id="zonaCarga">
+    <div id="dropzone">
+      <div class="icono">📂</div>
+      <h2>Arrastra aqui los 3 archivos, o haz clic para seleccionarlos</h2>
+      <p>2026 - Conciliacion Bancaria.xlsx &nbsp;·&nbsp; Analisis Inventario..xlsm &nbsp;·&nbsp; saldo a proveedor.pdf</p>
+      <p>No se sube nada a internet: todo se procesa aqui mismo, en tu navegador.</p>
+      <p>Esto solo se hace una vez: el navegador los recuerda para la proxima vez que abras este archivo. Cuando algo cambie, usa el boton "Archivos cargados" (arriba a la derecha) para reemplazar solo ese archivo.</p>
+      <p>Si OneDrive ya esta configurado en este reporte, usa mejor el boton "Conectar con OneDrive" arriba: trae los 3 archivos automaticamente, desde cualquier equipo.</p>
+      <input type="file" id="inputArchivos" multiple accept=".xlsx,.xlsm,.pdf">
+    </div>
+    <div id="estadoArchivos"></div>
+    <div id="errores"></div>
+  </div>
+
+  <div id="app">
+    <div class="resumen">
+      <div><div class="label">Total Activos</div><div class="valor" id="totalActivos">-</div></div>
+      <div><div class="label">Total Pasivos</div><div class="valor" id="totalPasivos">-</div></div>
+      <div class="balance"><div class="label">Balance al Dia</div><div class="valor" id="balanceDia">-</div></div>
+    </div>
+
+    <div class="composicion-grid">
+      <details class="chart-wrap" open>
+        <summary>Composicion de Activos</summary>
+        <div id="compActivos" class="comp-list"></div>
+      </details>
+      <details class="chart-wrap" open>
+        <summary>Composicion de Pasivos</summary>
+        <div id="compPasivos" class="comp-list"></div>
+      </details>
+    </div>
+
+    <div class="kpis" id="kpis"></div>
+
+    <div id="detalle"></div>
+  </div>
+
+</main>
+<footer>Se procesa 100% en tu navegador: no se envia ningun archivo a un servidor propio. Los archivos quedan guardados en este navegador para no tener que volver a cargarlos, y si OneDrive esta conectado se actualizan solos. Clic en un KPI para ir directo a su composicion.</footer>
+
+<script>
+// ============================================================
+// CONFIGURACION DE ONEDRIVE / SHAREPOINT (editar antes de usar)
+// Mientras "activo" sea false, el reporte funciona solo con
+// arrastrar archivos (como hasta ahora); el boton "Conectar con
+// OneDrive" queda oculto. Ver la guia de configuracion para saber
+// como obtener clientId / tenantId / las rutas de los archivos.
+// ============================================================
+const CONFIG_ONEDRIVE = {
+  activo: false, // cambiar a true cuando se completen los datos de abajo
+
+  clientId: "19c8d3e8-b452-42b4-af4e-2583a81ebf64",
+  tenantId: "be3d91db-0d14-4178-adac-6d104011148b",
+
+  // "sharepoint": los archivos estan en una biblioteca de un sitio de SharePoint
+  //   (lo mas comun cuando la carpeta se comparte con varias personas).
+  // "onedrive_personal": los archivos estan en el OneDrive personal de quien inicia sesion.
+  origen: "sharepoint",
+
+  hostnameSharePoint: "trendmakerspty-my.sharepoint.com", // solo si origen = "sharepoint"
+  sitePath: "https://trendmakerspty-my.sharepoint.com/:f:/g/personal/rchocron_trendmakers_com_pa/IgDchVpu34FHQYL0Xoy93rVxAYYVg9NVgOkeon5TXGlr3o8?e=mwLG9O",              // solo si origen = "sharepoint", ej: /sites/Contabilidad
+
+  // Rutas de cada archivo dentro de esa biblioteca (o del OneDrive personal),
+  // empezando con "/". Deben incluir carpeta y nombre exacto del archivo.
+  archivos: {
+    bancos: "https://trendmakerspty-my.sharepoint.com/:x:/g/personal/rchocron_trendmakers_com_pa/IQAwH4DPv5-hQbTlY60UGUtOAWE3R4cAuxlSdz9zPmD_0SM?e=RZR0pg",
+    inventario: "https://trendmakerspty-my.sharepoint.com/:x:/g/personal/rchocron_trendmakers_com_pa/IQAk58x8Ham3RqO8Aq0Pi0uNAcTplVrgTd09A6CZRX0t3zM?e=jloaNl",
+    pdf: "https://trendmakerspty-my.sharepoint.com/:b:/g/personal/rchocron_trendmakers_com_pa/IQBFg-KRbR_9SbqpqfpMnxvAAWyxfJZ_Xbve2lcvox__qCM?e=oPH9e2",
+  },
+};
+
+// ============================================================
+// UTILIDADES
+// ============================================================
+function normaliza(s) {
+  if (s === null || s === undefined) return "";
+  return String(s).trim().toUpperCase().normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, " ").trim();
+}
+function fmtMoneda(v) {
+  if (v === null || v === undefined || isNaN(v)) return "-";
+  return "$" + v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// ============================================================
+// MAPEO DE NOMBRES DE PROVEEDORES (PDF del sistema -> Excel gerente)
+// ============================================================
+const MAPEO_PROVEEDORES = {
+  "RIK SHIVA HK LTD": "* Rick Shiva",
+  "BAODING YINTAY TRADING CO, LDT": "* Baoding Yintay",
+  "SHINEGARDEN TRADING LIMITED": "*  Shinegarden Trading Limited",
+  "B.S.D. TRADING COMPANY LIMITED": "B.S.D Trading Company Limited",
+  "HONGKONG ELEVENBAG CO.LIMITED": "Elevenbag (Hong Kong)",
+  "FILCO HONGKONG LIMITED": "Filco - Hong Kong",
+  "INTERNATIONAL": "International  (Maitri Knitwear)",
+  "BELLANIS": "Bellanis",
+  "JBS TEXTILE GROUP AS": "JBS Textile Group",
+  "NINGBO YULU IMP AND EXP CO LTD": "Ningbo Yulu",
+};
+
+// ============================================================
+// CONECTOR: Excel de Conciliacion Bancaria -> pestana "BALANCE AL DIA "
+// ============================================================
+const SECCIONES = {
+  "DINERO EN BANCOS": "bancos",
+  "CUENTAS POR COBRAR": "cuentas_x_cobrar",
+  "LINEAS DE CREDITO AL DIA": "linea_credito",
+};
+const ETIQUETAS_CORTE = new Set([
+  "DINERO EN BANCOS", "CUENTAS POR COBRAR", "DEPOSITOS A PROVEEDORES",
+  "INVENTARIO AL DIA", "LINEAS DE CREDITO AL DIA", "TOTAL ACTIVOS",
+  "TOTAL PASIVOS", "BALANCE AL DIA",
+]);
+
+function esWorkbookBancos(wb) {
+  return wb.SheetNames.some(n => normaliza(n).includes("BALANCE AL DIA"));
+}
+
+function leerConciliacionBancaria(wb) {
+  const nombreHoja = wb.SheetNames.find(n => normaliza(n).includes("BALANCE AL DIA"));
+  const ws = wb.Sheets[nombreHoja];
+  const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
+
+  let periodo = null;
+  for (let r = 0; r < aoa.length; r++) {
+    for (let c = 0; c < (aoa[r] || []).length; c++) {
+      if (normaliza(aoa[r][c]) === "PERIODO:") {
+        const val = aoa[r][c + 1];
+        if (val instanceof Date) {
+          periodo = val.toISOString().slice(0, 10);
+        } else if (typeof val === "string") {
+          const m = val.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+          if (m) periodo = `${m[3]}-${m[2]}-${m[1]}`;
+        } else if (typeof val === "number") {
+          const d = XLSX.SSF.parse_date_code(val);
+          if (d) periodo = `${d.y}-${String(d.m).padStart(2, "0")}-${String(d.d).padStart(2, "0")}`;
+        }
+      }
+    }
+  }
+
+  const resultados = {};
+  for (let r = 0; r < aoa.length; r++) {
+    for (let c = 0; c < (aoa[r] || []).length; c++) {
+      const etiqueta = normaliza(aoa[r][c]);
+      if (!(etiqueta in SECCIONES)) continue;
+      const clave = SECCIONES[etiqueta];
+      const total = aoa[r][c + 1];
+      const desglose = [];
+      let rr = r + 1;
+      while (rr < aoa.length) {
+        const labelItem = (aoa[rr] || [])[c];
+        if (labelItem === null || labelItem === undefined) break;
+        if (ETIQUETAS_CORTE.has(normaliza(labelItem))) break;
+        const valItem = (aoa[rr] || [])[c + 1];
+        if (typeof valItem === "number") desglose.push([String(labelItem).trim(), valItem]);
+        rr++;
+      }
+      resultados[clave] = { total: typeof total === "number" ? total : null, desglose };
+    }
+  }
+  return {
+    fecha: periodo,
+    bancos: resultados.bancos || { total: null, desglose: [] },
+    cuentas_x_cobrar: resultados.cuentas_x_cobrar || { total: null, desglose: [] },
+    linea_credito: resultados.linea_credito || { total: null, desglose: [] },
+  };
+}
+
+// ============================================================
+// CONECTOR: Inventario (tablas dinamicas "Inv Now." / "Inv Tienda ZL")
+// ============================================================
+function esWorkbookInventario(wb) {
+  return wb.SheetNames.some(n => normaliza(n).includes("INV NOW") || normaliza(n).includes("TIENDA ZL"));
+}
+
+function leerPivotInventario(ws, columna) {
+  const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
+  let filaEnc = -1, colEtiqueta = -1;
+  for (let r = 0; r < aoa.length && filaEnc < 0; r++) {
+    for (let c = 0; c < (aoa[r] || []).length; c++) {
+      if (aoa[r][c] && String(aoa[r][c]).trim().toLowerCase().includes("etiquetas de fila")) {
+        filaEnc = r; colEtiqueta = c; break;
+      }
+    }
+  }
+  if (filaEnc < 0) return [];
+  const encabezados = {};
+  (aoa[filaEnc] || []).forEach((v, c) => { if (v) encabezados[String(v).trim().toLowerCase()] = c; });
+  const colValor = encabezados[columna];
+  if (colValor === undefined) return [];
+  const items = [];
+  let r = filaEnc + 1;
+  while (r < aoa.length) {
+    const etiqueta = (aoa[r] || [])[colEtiqueta];
+    if (etiqueta === null || etiqueta === undefined) break;
+    const valor = (aoa[r] || [])[colValor];
+    const etNorm = String(etiqueta).trim().toUpperCase();
+    const esTotal = etNorm.startsWith("BC1") || etNorm.startsWith("SH-1") || etNorm === "TOTAL GENERAL";
+    if (typeof valor === "number" && !esTotal) items.push([String(etiqueta).trim(), valor]);
+    r++;
+  }
+  return items;
+}
+
+// Solo estas 9 categorias de la bodega principal, en este orden (se identifican
+// por el numero al inicio de la etiqueta: "1.HUMMER MEN'S COLLECTION", etc.)
+function filtrarCategoriasPrincipales(items) {
+  return items
+    .map(([etiqueta, valor]) => {
+      const m = etiqueta.match(/^(\d+)\./);
+      return m ? { num: parseInt(m[1], 10), etiqueta, valor } : null;
+    })
+    .filter(x => x && x.num >= 1 && x.num <= 9)
+    .sort((a, b) => a.num - b.num)
+    .map(x => [x.etiqueta, x.valor]);
+}
+
+function leerInventario(wb) {
+  const hojaPrincipal = wb.SheetNames.find(n => normaliza(n).includes("INV NOW"));
+  const hojaZL = wb.SheetNames.find(n => normaliza(n).includes("TIENDA ZL"));
+
+  const principalCrudo = hojaPrincipal ? leerPivotInventario(wb.Sheets[hojaPrincipal], "valor fisico") : [];
+  const zlCrudo = hojaZL ? leerPivotInventario(wb.Sheets[hojaZL], "valor disponible") : [];
+
+  const principal = filtrarCategoriasPrincipales(principalCrudo);
+  const totalZL = zlCrudo.reduce((a, [, v]) => a + v, 0);
+
+  const desglose = [
+    ...principal,
+    ["Inventario Tienda ZL (valor disponible total)", totalZL],
+  ];
+  const totalPrincipal = principal.reduce((a, [, v]) => a + v, 0);
+  return { total: totalPrincipal + totalZL, desglose };
+}
+
+// ============================================================
+// CONECTOR: PDF de saldos por proveedor
+// ============================================================
+const LINEA_PROVEEDOR_RE = /^(\d+)\s+(.+?)\s+(-?[\d,]+\.\d{2})$/;
+
+async function extraerTextoPDF(arrayBuffer) {
+  const doc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  let textoCompleto = "";
+  for (let p = 1; p <= doc.numPages; p++) {
+    const page = await doc.getPage(p);
+    const content = await page.getTextContent();
+    const grupos = {};
+    for (const item of content.items) {
+      const y = Math.round(item.transform[5]);
+      if (!grupos[y]) grupos[y] = [];
+      grupos[y].push(item);
+    }
+    const ys = Object.keys(grupos).map(Number).sort((a, b) => b - a);
+    for (const y of ys) {
+      const linea = grupos[y].sort((a, b) => a.transform[4] - b.transform[4]).map(i => i.str).join(" ");
+      textoCompleto += linea.replace(/\s+/g, " ").trim() + "\n";
+    }
+  }
+  return textoCompleto;
+}
+
+async function leerSaldosProveedores(arrayBuffer) {
+  const texto = await extraerTextoPDF(arrayBuffer);
+  const mFecha = texto.match(/(\d{2})-(\d{2})-(\d{4})/);
+  const fecha = mFecha ? `${mFecha[3]}-${mFecha[2]}-${mFecha[1]}` : null;
+
+  const lineas = [];
+  for (const linea of texto.split("\n")) {
+    const m = linea.trim().match(LINEA_PROVEEDOR_RE);
+    if (!m) continue;
+    lineas.push({ codigo: m[1], proveedor: m[2].trim(), saldo: parseFloat(m[3].replace(/,/g, "")) });
+  }
+
+  const depositos = [], porPagar = [], sinMapear = [];
+  for (const l of lineas) {
+    const clave = normaliza(l.proveedor);
+    const etiquetaExcel = MAPEO_PROVEEDORES[clave] || null;
+    if (!etiquetaExcel) sinMapear.push(l);
+    const item = { codigo: l.codigo, proveedor_pdf: l.proveedor, etiqueta_excel: etiquetaExcel, monto: Math.abs(l.saldo) };
+    if (l.saldo < 0) depositos.push(item); else porPagar.push(item);
+  }
+
+  return {
+    fecha,
+    depositos_proveedores: {
+      total: depositos.reduce((a, d) => a + d.monto, 0),
+      desglose: depositos.map(d => [d.etiqueta_excel || d.proveedor_pdf, d.monto]),
+    },
+    cuentas_x_pagar_proveedores: {
+      total: porPagar.reduce((a, d) => a + d.monto, 0),
+      desglose: porPagar.map(d => [d.etiqueta_excel || d.proveedor_pdf, d.monto]),
+    },
+    sin_mapear: sinMapear,
+  };
+}
+
+// ============================================================
+// ORQUESTACION: identificar archivos y armar el snapshot completo
+// ============================================================
+const CATEGORIAS = [
+  ["bancos", "Dinero en Bancos", "#2563eb"],
+  ["cuentas_x_cobrar", "Cuentas por Cobrar", "#16a34a"],
+  ["depositos_proveedores", "Depositos a Proveedores", "#d97706"],
+  ["inventario", "Inventario al Dia", "#7c3aed"],
+  ["linea_credito", "Saldo Linea de Credito", "#dc2626"],
+];
+
+let ultimoSnapshot = null;
+// Estado persistente entre llamadas: cada vez que llegan archivos nuevos se
+// van completando estos 3 "casilleros" en vez de reemplazar todo el lote.
+let archivosState = { bancos: null, inventario: null, pdf: null };
+let archivosFechas = { bancos: null, inventario: null, pdf: null };
+
+// ============================================================
+// PERSISTENCIA LOCAL (IndexedDB): respaldo en este navegador para no
+// depender solo de internet / OneDrive en cada apertura.
+// ============================================================
+const DB_NOMBRE = "reporte_gerencial_db";
+const DB_STORE = "archivos";
+
+function abrirDB() {
+  return new Promise((resolve, reject) => {
+    if (!window.indexedDB) { reject(new Error("IndexedDB no disponible")); return; }
+    const req = indexedDB.open(DB_NOMBRE, 1);
+    req.onupgradeneeded = () => { req.result.createObjectStore(DB_STORE, { keyPath: "tipo" }); };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function guardarArchivoDB(tipo, file) {
+  const db = await abrirDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(DB_STORE, "readwrite");
+    tx.objectStore(DB_STORE).put({ tipo, nombre: file.name, fecha: Date.now(), blob: file });
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function leerTodosArchivosDB() {
+  try {
+    const db = await abrirDB();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(DB_STORE, "readonly");
+      const req = tx.objectStore(DB_STORE).getAll();
+      req.onsuccess = () => {
+        const out = { bancos: null, inventario: null, pdf: null };
+        for (const rec of req.result) out[rec.tipo] = rec;
+        resolve(out);
+      };
+      req.onerror = () => reject(req.error);
+    });
+  } catch (e) {
+    console.warn("No se pudo leer el almacenamiento local:", e);
+    return { bancos: null, inventario: null, pdf: null };
+  }
+}
+
+async function borrarTodoDB() {
+  try {
+    const db = await abrirDB();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(DB_STORE, "readwrite");
+      tx.objectStore(DB_STORE).clear();
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (e) { console.warn("No se pudo borrar el almacenamiento local:", e); }
+}
+
+async function guardarTodosEnDB() {
+  try {
+    await guardarArchivoDB("bancos", archivosState.bancos.file);
+    await guardarArchivoDB("inventario", archivosState.inventario.file);
+    await guardarArchivoDB("pdf", archivosState.pdf);
+  } catch (e) { console.warn("No se pudo guardar en el almacenamiento local:", e); }
+}
+
+async function procesarArchivos(fileList) {
+  const errores = [];
+
+  const arr = Array.from(fileList);
+  for (const f of arr) {
+    const ext = f.name.split(".").pop().toLowerCase();
+    if (ext === "pdf") { archivosState.pdf = f; archivosFechas.pdf = new Date(); continue; }
+    if (ext === "xlsx" || ext === "xlsm" || ext === "xls") {
+      const buf = await f.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array", cellDates: true });
+      if (esWorkbookBancos(wb)) { archivosState.bancos = { file: f, wb }; archivosFechas.bancos = new Date(); }
+      else if (esWorkbookInventario(wb)) { archivosState.inventario = { file: f, wb }; archivosFechas.inventario = new Date(); }
+      else errores.push(`"${f.name}" es un Excel pero no reconozco su contenido (no encontre la pestana de bancos ni la de inventario).`);
+    } else if (ext) {
+      errores.push(`"${f.name}" no es un tipo de archivo esperado (se ignora).`);
+    }
+  }
+
+  mostrarEstadoArchivos(archivosState.bancos, archivosState.inventario, archivosState.pdf);
+
+  if (!archivosState.bancos || !archivosState.inventario || !archivosState.pdf) {
+    mostrarErrores(errores);
+    return;
+  }
+
+  await construirSnapshotYRenderizar(errores, true);
+}
+
+// Reemplaza un solo archivo (desde el panel "Archivos cargados") sin tocar los otros dos.
+async function reemplazarUnArchivo(tipo, file) {
+  if (tipo === "pdf") {
+    archivosState.pdf = file;
+    archivosFechas.pdf = new Date();
+  } else {
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: "array", cellDates: true });
+    if (tipo === "bancos" && !esWorkbookBancos(wb)) {
+      alert('Ese archivo no parece ser el de Conciliacion Bancaria (no tiene la pestana "Balance al Dia").');
+      return;
+    }
+    if (tipo === "inventario" && !esWorkbookInventario(wb)) {
+      alert('Ese archivo no parece ser el de Analisis de Inventario (no tiene las pestanas "Inv Now" / "Tienda ZL").');
+      return;
+    }
+    archivosState[tipo] = { file, wb };
+    archivosFechas[tipo] = new Date();
+  }
+
+  mostrarEstadoArchivos(archivosState.bancos, archivosState.inventario, archivosState.pdf);
+  if (!archivosState.bancos || !archivosState.inventario || !archivosState.pdf) return;
+  await construirSnapshotYRenderizar([], true);
+}
+
+// Arma el snapshot a partir de archivosState y renderiza. `guardar=true` ademas
+// persiste los 3 archivos en IndexedDB (respaldo local, incluyendo lo que llega de OneDrive).
+async function construirSnapshotYRenderizar(errores, guardar) {
+  try {
+    const datosBancos = leerConciliacionBancaria(archivosState.bancos.wb);
+    const datosInventario = leerInventario(archivosState.inventario.wb);
+    const pdfBuf = await archivosState.pdf.arrayBuffer();
+    const datosProveedores = await leerSaldosProveedores(pdfBuf);
+
+    const fecha = datosBancos.fecha || datosProveedores.fecha || new Date().toISOString().slice(0, 10);
+
+    const totales = {
+      bancos: datosBancos.bancos.total || 0,
+      cuentas_x_cobrar: datosBancos.cuentas_x_cobrar.total || 0,
+      depositos_proveedores: datosProveedores.depositos_proveedores.total || 0,
+      inventario: datosInventario.total || 0,
+      linea_credito: datosBancos.linea_credito.total || 0,
+    };
+    const desgloses = {
+      bancos: datosBancos.bancos.desglose,
+      cuentas_x_cobrar: datosBancos.cuentas_x_cobrar.desglose,
+      depositos_proveedores: datosProveedores.depositos_proveedores.desglose,
+      inventario: datosInventario.desglose,
+      linea_credito: datosBancos.linea_credito.desglose,
+    };
+    const fuentes = {
+      bancos: "Excel (captura manual Contabilidad)",
+      cuentas_x_cobrar: "Excel (captura manual Contabilidad)",
+      depositos_proveedores: "PDF del sistema",
+      inventario: "Excel (tablas dinamicas)",
+      linea_credito: "Excel (captura manual Contabilidad)",
+    };
+
+    const hallazgos = [];
+    if (datosProveedores.cuentas_x_pagar_proveedores.total) {
+      hallazgos.push({
+        tipo: "Cuentas por pagar a proveedores",
+        descripcion: "Proveedores con saldo POSITIVO en el sistema (la empresa les debe), no incluido en Depositos a Proveedores.",
+        monto: datosProveedores.cuentas_x_pagar_proveedores.total,
+      });
+    }
+    for (const item of datosProveedores.sin_mapear) {
+      hallazgos.push({
+        tipo: "Proveedor sin mapear",
+        descripcion: `"${item.proveedor}" (cod. ${item.codigo}) aparece en el PDF pero no tiene equivalencia configurada.`,
+        monto: Math.abs(item.saldo),
+      });
+    }
+
+    const totalActivos = totales.bancos + totales.cuentas_x_cobrar + totales.depositos_proveedores + totales.inventario;
+    const totalPasivos = totales.linea_credito;
+
+    ultimoSnapshot = {
+      fecha, totales, desgloses, fuentes, hallazgos,
+      totalActivos, totalPasivos, balance: totalActivos - totalPasivos,
+    };
+
+    guardarHistorico(ultimoSnapshot);
+    render();
+    actualizarPanelArchivos();
+    if (guardar) await guardarTodosEnDB();
+  } catch (e) {
+    mostrarErrores([...(errores || []), "Error procesando los archivos: " + e.message]);
+    console.error(e);
+  }
+}
+
+// Al abrir la pagina, intenta restaurar los 3 archivos guardados en el navegador
+// (si existen) y muestra el reporte de una vez, sin pedir que se arrastren de nuevo.
+async function intentarAutocargar() {
+  const cache = await leerTodosArchivosDB();
+  if (!cache.bancos || !cache.inventario || !cache.pdf) return;
+  try {
+    const bufBancos = await cache.bancos.blob.arrayBuffer();
+    const wbBancos = XLSX.read(bufBancos, { type: "array", cellDates: true });
+    const bufInv = await cache.inventario.blob.arrayBuffer();
+    const wbInv = XLSX.read(bufInv, { type: "array", cellDates: true });
+
+    archivosState.bancos = { file: cache.bancos.blob, wb: wbBancos };
+    archivosState.inventario = { file: cache.inventario.blob, wb: wbInv };
+    archivosState.pdf = cache.pdf.blob;
+
+    archivosFechas.bancos = new Date(cache.bancos.fecha);
+    archivosFechas.inventario = new Date(cache.inventario.fecha);
+    archivosFechas.pdf = new Date(cache.pdf.fecha);
+
+    mostrarEstadoArchivos(archivosState.bancos, archivosState.inventario, archivosState.pdf);
+    await construirSnapshotYRenderizar([], false);
+  } catch (e) {
+    console.warn("No se pudo restaurar los archivos guardados:", e);
+  }
+}
+
+// ============================================================
+// ONEDRIVE / SHAREPOINT (Microsoft Graph): trae los 3 archivos desde la
+// nube en vez de arrastrarlos, para que el reporte funcione igual en
+// cualquier computadora, celular o navegador. Ver CONFIG_ONEDRIVE arriba.
+// ============================================================
+let msalInstance = null;
+if (CONFIG_ONEDRIVE.activo) {
+  try {
+    if (!window.msal) throw new Error("La libreria MSAL no cargo (revisa la conexion a internet).");
+    msalInstance = new msal.PublicClientApplication({
+      auth: {
+        clientId: CONFIG_ONEDRIVE.clientId,
+        authority: "https://login.microsoftonline.com/" + CONFIG_ONEDRIVE.tenantId,
+        redirectUri: window.location.origin + window.location.pathname,
+      },
+      cache: { cacheLocation: "localStorage", storeAuthStateInCookie: false },
+    });
+  } catch (e) {
+    console.error("No se pudo inicializar la conexion con OneDrive:", e);
+    msalInstance = null;
+  }
+}
+const GRAPH_SCOPES = ["Files.Read.All", "Sites.Read.All"];
+
+function mostrarEstadoOneDrive(msg) {
+  const el = document.getElementById("estadoOneDrive");
+  if (el) el.textContent = msg || "";
+}
+
+async function obtenerTokenGraph(interactivo) {
+  const cuentas = msalInstance.getAllAccounts();
+  if (cuentas.length > 0) {
+    try {
+      const resp = await msalInstance.acquireTokenSilent({ scopes: GRAPH_SCOPES, account: cuentas[0] });
+      return resp.accessToken;
+    } catch (e) {
+      if (!interactivo) throw e;
+    }
+  } else if (!interactivo) {
+    throw new Error("No hay una sesion de Microsoft guardada en este navegador.");
+  }
+  const resp = await msalInstance.loginPopup({ scopes: GRAPH_SCOPES });
+  return resp.accessToken;
+}
+
+let siteIdCache = null;
+async function obtenerSiteId(token) {
+  if (siteIdCache) return siteIdCache;
+  const url = "https://graph.microsoft.com/v1.0/sites/" + CONFIG_ONEDRIVE.hostnameSharePoint + ":" + CONFIG_ONEDRIVE.sitePath;
+  const r = await fetch(url, { headers: { Authorization: "Bearer " + token } });
+  if (!r.ok) throw new Error("No se pudo resolver el sitio de SharePoint (codigo " + r.status + "). Revisa hostnameSharePoint/sitePath en CONFIG_ONEDRIVE.");
+  const data = await r.json();
+  siteIdCache = data.id;
+  return siteIdCache;
+}
+
+// Descarga un archivo via Microsoft Graph. Se usa @microsoft.graph.downloadUrl
+// (en vez de pedir /content directo) porque /content responde con una
+// redireccion 302 que el navegador bloquea cuando se envia el header
+// Authorization; downloadUrl es un enlace prefirmado que no lo necesita.
+async function descargarArchivoGraph(token, rutaArchivo) {
+  let metaUrl;
+  if (CONFIG_ONEDRIVE.origen === "onedrive_personal") {
+    metaUrl = "https://graph.microsoft.com/v1.0/me/drive/root:" + encodeURI(rutaArchivo) + "?$select=id,name,@microsoft.graph.downloadUrl";
+  } else {
+    const siteId = await obtenerSiteId(token);
+    metaUrl = "https://graph.microsoft.com/v1.0/sites/" + siteId + "/drive/root:" + encodeURI(rutaArchivo) + "?$select=id,name,@microsoft.graph.downloadUrl";
+  }
+  const rMeta = await fetch(metaUrl, { headers: { Authorization: "Bearer " + token } });
+  if (!rMeta.ok) throw new Error('No se encontro "' + rutaArchivo + '" en OneDrive/SharePoint (codigo ' + rMeta.status + '). Revisa la ruta en CONFIG_ONEDRIVE.archivos.');
+  const meta = await rMeta.json();
+  const downloadUrl = meta["@microsoft.graph.downloadUrl"];
+  const rArchivo = await fetch(downloadUrl);
+  if (!rArchivo.ok) throw new Error('Fallo la descarga de "' + meta.name + '".');
+  const buf = await rArchivo.arrayBuffer();
+  return { nombre: meta.name, buf };
+}
+
+// interactivo=true: si hace falta, abre el popup de login de Microsoft.
+// interactivo=false: solo intenta con la sesion ya guardada (sin popup); si no hay, falla.
+async function cargarDesdeOneDrive(interactivo) {
+  if (!msalInstance) {
+    if (interactivo) mostrarErrores(["La conexion con OneDrive todavia no esta configurada (ver CONFIG_ONEDRIVE en el archivo)."]);
+    throw new Error("OneDrive no configurado");
+  }
+  mostrarEstadoOneDrive("Conectando con Microsoft...");
+  try {
+    const token = await obtenerTokenGraph(interactivo);
+    mostrarEstadoOneDrive("Descargando archivos desde OneDrive...");
+    const [bancos, inventario, pdf] = await Promise.all([
+      descargarArchivoGraph(token, CONFIG_ONEDRIVE.archivos.bancos),
+      descargarArchivoGraph(token, CONFIG_ONEDRIVE.archivos.inventario),
+      descargarArchivoGraph(token, CONFIG_ONEDRIVE.archivos.pdf),
+    ]);
+
+    const wbBancos = XLSX.read(bancos.buf, { type: "array", cellDates: true });
+    const wbInv = XLSX.read(inventario.buf, { type: "array", cellDates: true });
+
+    archivosState.bancos = { file: new File([bancos.buf], bancos.nombre), wb: wbBancos };
+    archivosState.inventario = { file: new File([inventario.buf], inventario.nombre), wb: wbInv };
+    archivosState.pdf = new File([pdf.buf], pdf.nombre);
+
+    const ahora = new Date();
+    archivosFechas.bancos = ahora; archivosFechas.inventario = ahora; archivosFechas.pdf = ahora;
+
+    mostrarEstadoArchivos(archivosState.bancos, archivosState.inventario, archivosState.pdf);
+    document.getElementById("btnOneDrive").textContent = "Actualizar desde OneDrive";
+    await construirSnapshotYRenderizar([], true);
+    mostrarEstadoOneDrive("Actualizado desde OneDrive · " + ahora.toLocaleString("es-PA"));
+  } catch (e) {
+    mostrarEstadoOneDrive("");
+    if (interactivo) mostrarErrores(["No se pudo cargar desde OneDrive: " + e.message]);
+    console.error(e);
+    throw e;
+  }
+}
+
+// Punto de entrada al abrir la pagina: intenta OneDrive en silencio primero
+// (sin pedir login si ya hay sesion guardada); si no hay o falla, cae al
+// respaldo local guardado en este navegador.
+async function iniciar() {
+  if (CONFIG_ONEDRIVE.activo && msalInstance) {
+    document.getElementById("btnOneDrive").classList.remove("oculto");
+    try {
+      await cargarDesdeOneDrive(false);
+      return;
+    } catch (e) {
+      // sin sesion activa o token vencido: seguimos con el respaldo local / dropzone
+    }
+  }
+  await intentarAutocargar();
+}
+
+// ============================================================
+// HISTORICO EN localStorage (solo se usa para el "vs. reporte anterior"
+// de cada KPI; no hay grafica de tendencia visible)
+// ============================================================
+const CLAVE_HISTORICO = "reporte_gerencial_historico";
+function guardarHistorico(snap) {
+  let hist = [];
+  try { hist = JSON.parse(localStorage.getItem(CLAVE_HISTORICO)) || []; } catch (e) { hist = []; }
+  hist = hist.filter(h => h.fecha !== snap.fecha);
+  hist.push({ fecha: snap.fecha, totales: snap.totales });
+  hist.sort((a, b) => a.fecha.localeCompare(b.fecha));
+  localStorage.setItem(CLAVE_HISTORICO, JSON.stringify(hist));
+}
+function leerHistorico() {
+  try { return JSON.parse(localStorage.getItem(CLAVE_HISTORICO)) || []; } catch (e) { return []; }
+}
+
+// ============================================================
+// UI: estado de carga de archivos
+// ============================================================
+function mostrarEstadoArchivos(bancos, inventario, pdf) {
+  const cont = document.getElementById("estadoArchivos");
+  const item = (ok, nombre) => `<div class="item ${ok ? "ok" : "falta"}">${ok ? "✔" : "○"} ${nombre}</div>`;
+  cont.innerHTML =
+    item(!!bancos, bancos ? bancos.file.name : "Excel de Conciliacion Bancaria (falta)") +
+    item(!!inventario, inventario ? inventario.file.name : "Excel de Analisis de Inventario (falta)") +
+    item(!!pdf, pdf ? pdf.name : "PDF de saldo a proveedores (falta)");
+}
+function mostrarErrores(lista) {
+  const cont = document.getElementById("errores");
+  if (!lista.length) { cont.innerHTML = ""; return; }
+  cont.innerHTML = lista.map(e => `<div class="error-box">${e}</div>`).join("");
+}
+
+function actualizarPanelArchivos() {
+  const nombres = {
+    bancos: archivosState.bancos ? archivosState.bancos.file.name : null,
+    inventario: archivosState.inventario ? archivosState.inventario.file.name : null,
+    pdf: archivosState.pdf ? archivosState.pdf.name : null,
+  };
+  for (const tipo of ["bancos", "inventario", "pdf"]) {
+    const nombreEl = document.getElementById("nombre_" + tipo);
+    const fechaEl = document.getElementById("fecha_" + tipo);
+    if (!nombreEl) continue;
+    nombreEl.textContent = nombres[tipo] || "(no configurado)";
+    fechaEl.textContent = archivosFechas[tipo] ? "Guardado: " + archivosFechas[tipo].toLocaleString("es-PA") : "";
+  }
+}
+
+// ============================================================
+// RENDER
+// ============================================================
+function render() {
+  document.getElementById("zonaCarga").classList.add("oculto");
+  document.getElementById("app").classList.add("visible");
+  document.getElementById("btnArchivos").classList.remove("oculto");
+  document.getElementById("fechaCorte").textContent = "Corte: " + ultimoSnapshot.fecha;
+
+  document.getElementById("totalActivos").textContent = fmtMoneda(ultimoSnapshot.totalActivos);
+  document.getElementById("totalPasivos").textContent = fmtMoneda(ultimoSnapshot.totalPasivos);
+  document.getElementById("balanceDia").textContent = fmtMoneda(ultimoSnapshot.balance);
+
+  renderComposicionTotales();
+  renderKPIs();
+  renderSecciones();
+}
+
+function deltaVsAnterior(clave) {
+  const hist = leerHistorico().filter(h => h.fecha < ultimoSnapshot.fecha);
+  if (!hist.length) return null;
+  const anterior = hist[hist.length - 1];
+  const vAnt = anterior.totales[clave];
+  const vAct = ultimoSnapshot.totales[clave];
+  if (vAnt === undefined || vAnt === null || vAnt === 0) return null;
+  return { abs: vAct - vAnt, pct: ((vAct - vAnt) / Math.abs(vAnt)) * 100 };
+}
+
+// ---- Lista de composicion (reemplaza las graficas de barras) ----
+function htmlListaComposicion(items, colorDefault, maxItems) {
+  const total = items.reduce((a, it) => a + it[1], 0) || 1;
+  let lista = items.slice().sort((a, b) => b[1] - a[1]);
+  let extra = null;
+  if (maxItems && lista.length > maxItems) {
+    extra = lista.length - maxItems;
+    lista = lista.slice(0, maxItems);
+  }
+  const filas = lista.map(([nombre, monto, color]) => {
+    const pct = (monto / total) * 100;
+    const c = color || colorDefault;
+    return `
+      <div class="comp-row">
+        <div class="comp-row-top">
+          <span class="nombre">${nombre}</span>
+          <span class="monto">${fmtMoneda(monto)} <span class="pct">(${pct.toFixed(1)}%)</span></span>
+        </div>
+        <div class="comp-bar-bg"><div class="comp-bar-fill" style="width:${pct.toFixed(2)}%;background:${c}"></div></div>
+      </div>`;
+  }).join("");
+  const nota = extra ? `<div class="comp-mas">+ ${extra} mas (ver tabla completa abajo)</div>` : "";
+  return filas + nota;
+}
+
+function renderComposicionTotales() {
+  const itemsActivos = CATEGORIAS
+    .filter(([clave]) => clave !== "linea_credito")
+    .map(([clave, nombre, color]) => [nombre, ultimoSnapshot.totales[clave] || 0, color]);
+  document.getElementById("compActivos").innerHTML = htmlListaComposicion(itemsActivos, "#2563eb");
+
+  const itemsPasivos = [["Saldo Linea de Credito", ultimoSnapshot.totales.linea_credito || 0, "#dc2626"]];
+  document.getElementById("compPasivos").innerHTML = htmlListaComposicion(itemsPasivos, "#dc2626");
+}
+
+function renderKPIs() {
+  const cont = document.getElementById("kpis");
+  cont.innerHTML = "";
+  for (const [clave, nombre, color] of CATEGORIAS) {
+    const delta = deltaVsAnterior(clave);
+    let deltaHtml = "";
+    if (delta) {
+      const signo = delta.abs >= 0 ? "▲" : "▼";
+      const clase = delta.abs >= 0 ? "up" : "down";
+      deltaHtml = `<div class="kpi-delta ${clase}">${signo} ${fmtMoneda(Math.abs(delta.abs))} (${delta.pct.toFixed(1)}%) vs. reporte anterior</div>`;
+    }
+    const div = document.createElement("div");
+    div.className = "kpi-card";
+    div.style.setProperty("--kpi-color", color);
+    div.innerHTML = `
+      <div class="kpi-label">${nombre}</div>
+      <div class="kpi-value">${fmtMoneda(ultimoSnapshot.totales[clave])}</div>
+      ${deltaHtml}
+      <div class="kpi-fuente">${ultimoSnapshot.fuentes[clave]}</div>
+      <div class="kpi-hint">Ver composicion ↓</div>`;
+    div.addEventListener("click", () => {
+      document.getElementById("seccion-" + clave).scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    cont.appendChild(div);
+  }
+}
+
+function renderSecciones() {
+  const cont = document.getElementById("detalle");
+  cont.innerHTML = "";
+  for (const [clave, nombre, color] of CATEGORIAS) {
+    const seccion = document.createElement("div");
+    seccion.className = "seccion";
+    seccion.id = "seccion-" + clave;
+    seccion.style.setProperty("--sec-color", color);
+
+    const desglose = ultimoSnapshot.desgloses[clave] || [];
+
+    if (!desglose.length) {
+      seccion.innerHTML = `
+        <div class="seccion-header"><h3>${nombre}</h3><div class="total">${fmtMoneda(ultimoSnapshot.totales[clave])}</div></div>
+        <div class="fuente">${ultimoSnapshot.fuentes[clave]}</div>
+        <div class="sin-desglose">Este valor llega como una sola cifra en el Excel (sin desglose por concepto).</div>`;
+      cont.appendChild(seccion);
+      continue;
+    }
+
+    seccion.innerHTML = `
+      <div class="seccion-header"><h3>${nombre}</h3><div class="total">${fmtMoneda(ultimoSnapshot.totales[clave])}</div></div>
+      <div class="fuente">${ultimoSnapshot.fuentes[clave]} · ${desglose.length} conceptos</div>
+      <div class="comp-list" style="margin-top:14px;">${htmlListaComposicion(desglose, color)}</div>`;
+    cont.appendChild(seccion);
+  }
+}
+
+// ============================================================
+// EVENTOS: dropzone / seleccion de archivos / panel de archivos / OneDrive
+// ============================================================
+const dropzone = document.getElementById("dropzone");
+const inputArchivos = document.getElementById("inputArchivos");
+
+dropzone.addEventListener("click", () => inputArchivos.click());
+inputArchivos.addEventListener("change", (e) => procesarArchivos(e.target.files));
+
+["dragenter", "dragover"].forEach(ev => dropzone.addEventListener(ev, (e) => {
+  e.preventDefault(); e.stopPropagation(); dropzone.classList.add("arrastrando");
+}));
+["dragleave", "drop"].forEach(ev => dropzone.addEventListener(ev, (e) => {
+  e.preventDefault(); e.stopPropagation(); dropzone.classList.remove("arrastrando");
+}));
+dropzone.addEventListener("drop", (e) => {
+  if (e.dataTransfer.files.length) procesarArchivos(e.dataTransfer.files);
+});
+
+document.getElementById("btnArchivos").addEventListener("click", () => {
+  actualizarPanelArchivos();
+  document.getElementById("panelArchivos").classList.toggle("oculto");
+});
+document.getElementById("btnCerrarPanel").addEventListener("click", () => {
+  document.getElementById("panelArchivos").classList.add("oculto");
+});
+document.querySelectorAll(".input-reemplazo").forEach(input => {
+  input.addEventListener("change", (e) => {
+    const tipo = e.target.dataset.tipo;
+    const file = e.target.files[0];
+    if (file) reemplazarUnArchivo(tipo, file);
+    e.target.value = "";
+  });
+});
+document.getElementById("btnBorrarTodo").addEventListener("click", async () => {
+  if (!confirm("Esto borrara los archivos guardados en este navegador. Tendras que volver a cargarlos. Continuar?")) return;
+  await borrarTodoDB();
+  archivosState = { bancos: null, inventario: null, pdf: null };
+  archivosFechas = { bancos: null, inventario: null, pdf: null };
+  ultimoSnapshot = null;
+  document.getElementById("panelArchivos").classList.add("oculto");
+  document.getElementById("zonaCarga").classList.remove("oculto");
+  document.getElementById("app").classList.remove("visible");
+  document.getElementById("btnArchivos").classList.add("oculto");
+  document.getElementById("estadoArchivos").innerHTML = "";
+  document.getElementById("errores").innerHTML = "";
+  inputArchivos.value = "";
+});
+document.getElementById("btnOneDrive").addEventListener("click", () => {
+  cargarDesdeOneDrive(true).catch(() => {});
+});
+
+// Worker de pdf.js (misma version que el script cargado arriba)
+pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+// Al cargar la pagina: intenta OneDrive en silencio, si no, el respaldo local.
+iniciar();
+</script>
+</body>
+</html>
