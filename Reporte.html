@@ -202,11 +202,17 @@
 
 <script>
 // ============================================================
-// CONFIGURACION DE ONEDRIVE / SHAREPOINT (editar antes de usar)
+// CONFIGURACION DE ONEDRIVE (editar antes de usar)
 // Mientras "activo" sea false, el reporte funciona solo con
 // arrastrar archivos (como hasta ahora); el boton "Conectar con
-// OneDrive" queda oculto. Ver la guia de configuracion para saber
-// como obtener clientId / tenantId / los enlaces de los archivos.
+// OneDrive" queda oculto.
+//
+// archivos.bancos / archivos.inventario / archivos.pdf: el NOMBRE
+// EXACTO de cada archivo (tal como aparece en OneDrive), no un enlace.
+// El reporte busca ese nombre dentro de "Compartido conmigo" en la
+// cuenta que inicia sesion (y si no aparece ahi, en su propio OneDrive).
+// Por eso el archivo debe estar compartido con la cuenta que va a usar
+// el boton "Conectar con OneDrive".
 // ============================================================
 const CONFIG_ONEDRIVE = {
   activo: true,
@@ -214,13 +220,10 @@ const CONFIG_ONEDRIVE = {
   clientId: "19c8d3e8-b452-42b4-af4e-2583a81ebf64",
   tenantId: "be3d91db-0d14-4178-adac-6d104011148b",
 
-  // Pega aqui el enlace "Compartir" de cada archivo tal cual lo copias desde
-  // OneDrive (clic derecho sobre el archivo -> Compartir -> Copiar vinculo).
-  // No hace falta editarlos ni acortarlos.
   archivos: {
-    bancos: "https://trendmakerspty-my.sharepoint.com/:x:/g/personal/rchocron_trendmakers_com_pa/IQAwH4DPv5-hQbTlY60UGUtOAWE3R4cAuxlSdz9zPmD_0SM?e=RZR0pg",
-    inventario: "https://trendmakerspty-my.sharepoint.com/:x:/g/personal/rchocron_trendmakers_com_pa/IQAk58x8Ham3RqO8Aq0Pi0uNAfMLJs39qLhDBqHjfasq3_g",
-    pdf: "https://trendmakerspty-my.sharepoint.com/:b:/g/personal/rchocron_trendmakers_com_pa/IQBFg-KRbR_9SbqpqfpMnxvAAWyxfJZ_Xbve2lcvox__qCM?e=oPH9e2",
+    bancos: "2026 - Conciliacion Bancaria.xlsx",
+    inventario: "Analisis Inventario..xlsm",
+    pdf: "saldo a proveedor.pdf",
   },
 };
 
@@ -679,9 +682,16 @@ async function intentarAutocargar() {
 }
 
 // ============================================================
-// ONEDRIVE / SHAREPOINT (Microsoft Graph): trae los 3 archivos desde la
-// nube en vez de arrastrarlos, para que el reporte funcione igual en
-// cualquier computadora, celular o navegador. Ver CONFIG_ONEDRIVE arriba.
+// ONEDRIVE (Microsoft Graph): trae los 3 archivos desde la nube en vez
+// de arrastrarlos, para que el reporte funcione igual en cualquier
+// computadora, celular o navegador. Ver CONFIG_ONEDRIVE arriba.
+//
+// Se busca cada archivo por NOMBRE dentro de "Compartido conmigo"
+// (/me/drive/sharedWithMe) de la cuenta que inicia sesion, y si no
+// aparece ahi, en su propio OneDrive. Esto es mas estable que decodificar
+// un enlace "Compartir": ese enlace puede comportarse de forma
+// inconsistente segun el tipo de permiso, mientras que "Compartido
+// conmigo" refleja el acceso real y permanente que ya tiene la cuenta.
 // ============================================================
 let msalInstance = null;
 if (CONFIG_ONEDRIVE.activo) {
@@ -723,36 +733,54 @@ async function obtenerTokenGraph(interactivo) {
   return resp.accessToken;
 }
 
-// Convierte un enlace "Compartir" de OneDrive/SharePoint en el identificador
-// que pide la API de Graph (algoritmo oficial de Microsoft: base64 -> base64url
-// sin relleno -> prefijo "u!"). Con esto no hace falta saber el sitio ni la
-// ruta interna del archivo: sirve directo el enlace que se copia con "Compartir".
-function codificarUrlCompartida(url) {
-  const limpia = url.trim();
-  let base64;
-  try {
-    base64 = btoa(unescape(encodeURIComponent(limpia)));
-  } catch (e) {
-    base64 = btoa(limpia);
+// Lista una vez "Compartido conmigo" y la guarda en cache para no repetir
+// la llamada por cada uno de los 3 archivos.
+let cacheCompartidoConmigo = null;
+function listarCompartidoConmigo(token) {
+  // Se guarda la PROMESA (no el resultado) para que las 3 descargas en paralelo
+  // (Promise.all) compartan la misma llamada en vez de disparar 3 peticiones.
+  if (!cacheCompartidoConmigo) {
+    cacheCompartidoConmigo = (async () => {
+      const url = "https://graph.microsoft.com/v1.0/me/drive/sharedWithMe?$select=name,remoteItem";
+      const r = await fetch(url, { headers: { Authorization: "Bearer " + token } });
+      if (!r.ok) throw new Error('No se pudo leer "Compartido conmigo" en OneDrive (codigo ' + r.status + ').');
+      const data = await r.json();
+      return data.value || [];
+    })();
   }
-  const base64url = base64.replace(/=+$/, "").replace(/\//g, "_").replace(/\+/g, "-");
-  return "u!" + base64url;
+  return cacheCompartidoConmigo;
 }
 
-// Descarga un archivo via Microsoft Graph a partir de su enlace "Compartir".
-// Se usa @microsoft.graph.downloadUrl (en vez de pedir /content directo) porque
-// /content responde con una redireccion 302 que el navegador bloquea cuando se
-// envia el header Authorization; downloadUrl es un enlace prefirmado que no lo necesita.
-// "etiqueta" (bancos/inventario/pdf) es solo para que los mensajes de error digan
-// cual de los 3 archivos fallo.
-async function descargarArchivoGraph(token, urlCompartida, etiqueta) {
-  const shareId = codificarUrlCompartida(urlCompartida);
-  const metaUrl = "https://graph.microsoft.com/v1.0/shares/" + shareId + "/driveItem?$select=id,name,@microsoft.graph.downloadUrl";
+// Descarga un archivo de OneDrive a partir de su nombre. Primero lo busca
+// en "Compartido conmigo"; si no aparece ahi, intenta en el OneDrive propio
+// de la cuenta (por si la persona que inicia sesion es la duena del archivo).
+// "etiqueta" (bancos/inventario/pdf) es solo para que los mensajes de error
+// digan cual de los 3 archivos fallo.
+async function descargarArchivoGraph(token, nombreArchivo, etiqueta) {
+  const nombreBuscado = String(nombreArchivo).trim();
+  let metaUrl = null;
+
+  try {
+    const compartidos = await listarCompartidoConmigo(token);
+    const item = compartidos.find(it => it.name && normaliza(it.name) === normaliza(nombreBuscado));
+    if (item && item.remoteItem && item.remoteItem.parentReference) {
+      const driveId = item.remoteItem.parentReference.driveId;
+      const itemId = item.remoteItem.id;
+      metaUrl = "https://graph.microsoft.com/v1.0/drives/" + driveId + "/items/" + itemId + "?$select=id,name,@microsoft.graph.downloadUrl";
+    }
+  } catch (e) {
+    console.warn('No se pudo revisar "Compartido conmigo" para "' + nombreBuscado + '":', e);
+  }
+
+  if (!metaUrl) {
+    metaUrl = "https://graph.microsoft.com/v1.0/me/drive/root:/" + encodeURIComponent(nombreBuscado) + "?$select=id,name,@microsoft.graph.downloadUrl";
+  }
+
   const rMeta = await fetch(metaUrl, { headers: { Authorization: "Bearer " + token } });
-  if (!rMeta.ok) throw new Error('No se pudo abrir el archivo "' + etiqueta + '" (codigo ' + rMeta.status + '). Revisa el enlace de CONFIG_ONEDRIVE.archivos.' + etiqueta + ' (copialo de nuevo desde OneDrive: clic derecho -> Compartir -> Copiar vinculo).');
+  if (!rMeta.ok) throw new Error('No se encontro "' + nombreBuscado + '" (' + etiqueta + '), ni en "Compartido conmigo" ni en tu OneDrive (codigo ' + rMeta.status + '). Verifica que el archivo este compartido con esta cuenta de Microsoft y que el nombre en CONFIG_ONEDRIVE.archivos.' + etiqueta + ' sea exactamente igual al de OneDrive.');
   const meta = await rMeta.json();
   const downloadUrl = meta["@microsoft.graph.downloadUrl"];
-  if (!downloadUrl) throw new Error('No se recibio un enlace de descarga para "' + etiqueta + '" (' + (meta.name || urlCompartida) + '). Revisa en OneDrive si ese enlace tiene activado "Restringir descarga" (Block download) y desactivalo, o genera un enlace nuevo.');
+  if (!downloadUrl) throw new Error('No se recibio un enlace de descarga para "' + etiqueta + '" (' + (meta.name || nombreBuscado) + '). Revisa en OneDrive si ese archivo tiene activado "Restringir descarga" (Block download) y desactivalo.');
   let rArchivo;
   try {
     rArchivo = await fetch(downloadUrl);
@@ -772,6 +800,7 @@ async function cargarDesdeOneDrive(interactivo) {
     throw new Error("OneDrive no configurado");
   }
   mostrarEstadoOneDrive("Conectando con Microsoft...");
+  cacheCompartidoConmigo = null;
   try {
     const token = await obtenerTokenGraph(interactivo);
     mostrarEstadoOneDrive("Descargando archivos desde OneDrive...");
