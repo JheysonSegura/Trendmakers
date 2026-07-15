@@ -206,7 +206,7 @@
 // Mientras "activo" sea false, el reporte funciona solo con
 // arrastrar archivos (como hasta ahora); el boton "Conectar con
 // OneDrive" queda oculto. Ver la guia de configuracion para saber
-// como obtener clientId / tenantId / las rutas de los archivos.
+// como obtener clientId / tenantId / los enlaces de los archivos.
 // ============================================================
 const CONFIG_ONEDRIVE = {
   activo: true,
@@ -750,8 +750,14 @@ async function descargarArchivoGraph(token, urlCompartida) {
   if (!rMeta.ok) throw new Error('No se pudo abrir uno de los archivos compartidos (codigo ' + rMeta.status + '). Revisa el enlace correspondiente en CONFIG_ONEDRIVE.archivos.');
   const meta = await rMeta.json();
   const downloadUrl = meta["@microsoft.graph.downloadUrl"];
-  const rArchivo = await fetch(downloadUrl);
-  if (!rArchivo.ok) throw new Error('Fallo la descarga de "' + meta.name + '".');
+  if (!downloadUrl) throw new Error('No se recibio un enlace de descarga para "' + (meta.name || urlCompartida) + '" (revisa los permisos Files.Read.All / Sites.Read.All otorgados en Azure).');
+  let rArchivo;
+  try {
+    rArchivo = await fetch(downloadUrl);
+  } catch (e) {
+    throw new Error('No se pudo descargar "' + meta.name + '": ' + e.message + ' (posible bloqueo de CORS o de red).');
+  }
+  if (!rArchivo.ok) throw new Error('Fallo la descarga de "' + meta.name + '" (codigo ' + rArchivo.status + ' ' + rArchivo.statusText + ').');
   const buf = await rArchivo.arrayBuffer();
   return { nombre: meta.name, buf };
 }
