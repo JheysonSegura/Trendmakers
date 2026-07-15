@@ -218,9 +218,9 @@ const CONFIG_ONEDRIVE = {
   // OneDrive (clic derecho sobre el archivo -> Compartir -> Copiar vinculo).
   // No hace falta editarlos ni acortarlos.
   archivos: {
-    bancos: "https://trendmakerspty-my.sharepoint.com/:x:/g/personal/rchocron_trendmakers_com_pa/IQAwH4DPv5-hQbTlY60UGUtOAbukL0wLCh88THYhxUfld6Q?e=2JOrsT",
-    inventario: "https://trendmakerspty-my.sharepoint.com/:x:/g/personal/rchocron_trendmakers_com_pa/IQAk58x8Ham3RqO8Aq0Pi0uNAfMLJs39qLhDBqHjfasq3_g?e=sEEAzg",
-    pdf: "https://trendmakerspty-my.sharepoint.com/:b:/g/personal/rchocron_trendmakers_com_pa/IQBFg-KRbR_9SbqpqfpMnxvAATtbWZT0Rhi14H73YAUXMvg",
+    bancos: "https://trendmakerspty-my.sharepoint.com/:x:/g/personal/rchocron_trendmakers_com_pa/IQAwH4DPv5-hQbTlY60UGUtOAWE3R4cAuxlSdz9zPmD_0SM?e=RZR0pg",
+    inventario: "https://trendmakerspty-my.sharepoint.com/:x:/g/personal/rchocron_trendmakers_com_pa/IQAk58x8Ham3RqO8Aq0Pi0uNAcTplVrgTd09A6CZRX0t3zM?e=jloaNl",
+    pdf: "https://trendmakerspty-my.sharepoint.com/:b:/g/personal/rchocron_trendmakers_com_pa/IQBFg-KRbR_9SbqpqfpMnxvAAWyxfJZ_Xbve2lcvox__qCM?e=oPH9e2",
   },
 };
 
@@ -743,21 +743,23 @@ function codificarUrlCompartida(url) {
 // Se usa @microsoft.graph.downloadUrl (en vez de pedir /content directo) porque
 // /content responde con una redireccion 302 que el navegador bloquea cuando se
 // envia el header Authorization; downloadUrl es un enlace prefirmado que no lo necesita.
-async function descargarArchivoGraph(token, urlCompartida) {
+// "etiqueta" (bancos/inventario/pdf) es solo para que los mensajes de error digan
+// cual de los 3 archivos fallo.
+async function descargarArchivoGraph(token, urlCompartida, etiqueta) {
   const shareId = codificarUrlCompartida(urlCompartida);
   const metaUrl = "https://graph.microsoft.com/v1.0/shares/" + shareId + "/driveItem?$select=id,name,@microsoft.graph.downloadUrl";
   const rMeta = await fetch(metaUrl, { headers: { Authorization: "Bearer " + token } });
-  if (!rMeta.ok) throw new Error('No se pudo abrir uno de los archivos compartidos (codigo ' + rMeta.status + '). Revisa el enlace correspondiente en CONFIG_ONEDRIVE.archivos.');
+  if (!rMeta.ok) throw new Error('No se pudo abrir el archivo "' + etiqueta + '" (codigo ' + rMeta.status + '). Revisa el enlace de CONFIG_ONEDRIVE.archivos.' + etiqueta + ' (copialo de nuevo desde OneDrive: clic derecho -> Compartir -> Copiar vinculo).');
   const meta = await rMeta.json();
   const downloadUrl = meta["@microsoft.graph.downloadUrl"];
-  if (!downloadUrl) throw new Error('No se recibio un enlace de descarga para "' + (meta.name || urlCompartida) + '" (revisa los permisos Files.Read.All / Sites.Read.All otorgados en Azure).');
+  if (!downloadUrl) throw new Error('No se recibio un enlace de descarga para "' + etiqueta + '" (' + (meta.name || urlCompartida) + '). Revisa en OneDrive si ese enlace tiene activado "Restringir descarga" (Block download) y desactivalo, o genera un enlace nuevo.');
   let rArchivo;
   try {
     rArchivo = await fetch(downloadUrl);
   } catch (e) {
-    throw new Error('No se pudo descargar "' + meta.name + '": ' + e.message + ' (posible bloqueo de CORS o de red).');
+    throw new Error('No se pudo descargar "' + etiqueta + '" (' + meta.name + '): ' + e.message + ' (posible bloqueo de CORS o de red).');
   }
-  if (!rArchivo.ok) throw new Error('Fallo la descarga de "' + meta.name + '" (codigo ' + rArchivo.status + ' ' + rArchivo.statusText + ').');
+  if (!rArchivo.ok) throw new Error('Fallo la descarga de "' + etiqueta + '" (' + meta.name + '), codigo ' + rArchivo.status + ' ' + rArchivo.statusText + '.');
   const buf = await rArchivo.arrayBuffer();
   return { nombre: meta.name, buf };
 }
@@ -774,9 +776,9 @@ async function cargarDesdeOneDrive(interactivo) {
     const token = await obtenerTokenGraph(interactivo);
     mostrarEstadoOneDrive("Descargando archivos desde OneDrive...");
     const [bancos, inventario, pdf] = await Promise.all([
-      descargarArchivoGraph(token, CONFIG_ONEDRIVE.archivos.bancos),
-      descargarArchivoGraph(token, CONFIG_ONEDRIVE.archivos.inventario),
-      descargarArchivoGraph(token, CONFIG_ONEDRIVE.archivos.pdf),
+      descargarArchivoGraph(token, CONFIG_ONEDRIVE.archivos.bancos, "bancos"),
+      descargarArchivoGraph(token, CONFIG_ONEDRIVE.archivos.inventario, "inventario"),
+      descargarArchivoGraph(token, CONFIG_ONEDRIVE.archivos.pdf, "pdf"),
     ]);
 
     const wbBancos = XLSX.read(bancos.buf, { type: "array", cellDates: true });
