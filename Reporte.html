@@ -751,9 +751,32 @@ function listarCompartidoConmigo(token) {
   return cacheCompartidoConmigo;
 }
 
-// Descarga un archivo de OneDrive a partir de su nombre. Primero lo busca
-// en "Compartido conmigo"; si no aparece ahi, intenta en el OneDrive propio
-// de la cuenta (por si la persona que inicia sesion es la duena del archivo).
+// Busca el archivo dentro del propio OneDrive de la cuenta (en cualquier
+// carpeta, no solo en la raiz) usando la busqueda de Graph. Cubre el caso de
+// alguien que es DUENO (o co-propietario) del archivo: esos no aparecen en
+// "Compartido conmigo", que solo lista lo compartido por otras personas.
+async function resolverEnDrivePropio(token, nombreBuscado) {
+  try {
+    const url = "https://graph.microsoft.com/v1.0/me/drive/root/search(q='" + encodeURIComponent(nombreBuscado) + "')?$select=id,name,parentReference";
+    const r = await fetch(url, { headers: { Authorization: "Bearer " + token } });
+    if (!r.ok) return null;
+    const data = await r.json();
+    const items = data.value || [];
+    const item = items.find(it => it.name && normaliza(it.name) === normaliza(nombreBuscado));
+    if (item && item.parentReference) {
+      return { driveId: item.parentReference.driveId, itemId: item.id };
+    }
+  } catch (e) {
+    console.warn('No se pudo buscar "' + nombreBuscado + '" en el OneDrive propio:', e);
+  }
+  return null;
+}
+
+// Descarga un archivo de OneDrive a partir de su nombre. Prueba, en orden:
+// 1) "Compartido conmigo" (lo comparte otra persona con esta cuenta),
+// 2) una busqueda recursiva en el propio OneDrive (por si esta cuenta es
+//    duena o co-propietaria del archivo, en cualquier carpeta),
+// 3) como ultimo recurso, la raiz del propio OneDrive.
 // "etiqueta" (bancos/inventario/pdf) es solo para que los mensajes de error
 // digan cual de los 3 archivos fallo.
 async function descargarArchivoGraph(token, nombreArchivo, etiqueta) {
@@ -770,6 +793,13 @@ async function descargarArchivoGraph(token, nombreArchivo, etiqueta) {
     }
   } catch (e) {
     console.warn('No se pudo revisar "Compartido conmigo" para "' + nombreBuscado + '":', e);
+  }
+
+  if (!metaUrl) {
+    const ubicacion = await resolverEnDrivePropio(token, nombreBuscado);
+    if (ubicacion) {
+      metaUrl = "https://graph.microsoft.com/v1.0/drives/" + ubicacion.driveId + "/items/" + ubicacion.itemId + "?$select=id,name,@microsoft.graph.downloadUrl";
+    }
   }
 
   if (!metaUrl) {
