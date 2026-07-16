@@ -801,8 +801,7 @@ async function resolverEnGrupo(token, nombreBuscado) {
 // 4) como ultimo recurso, la raiz del propio OneDrive.
 // "etiqueta" (bancos/inventario/pdf) es solo para que los mensajes de error
 // digan cual de los 3 archivos fallo.
-async function descargarArchivoGraph(token, nombreArchivo, etiqueta) {
-  const nombreBuscado = String(nombreArchivo).trim();
+async function resolverMetaArchivo(token, nombreBuscado, etiqueta) {
   let metaUrl = null;
   let metaDirecta = await resolverEnGrupo(token, nombreBuscado);
 
@@ -831,16 +830,25 @@ async function descargarArchivoGraph(token, nombreArchivo, etiqueta) {
     metaUrl = "https://graph.microsoft.com/v1.0/me/drive/root:/" + encodeURIComponent(nombreBuscado) + "?$select=id,name,@microsoft.graph.downloadUrl";
   }
 
-  let meta;
-  if (metaDirecta) {
-    meta = metaDirecta;
-  } else {
-    const rMeta = await fetch(metaUrl, { headers: { Authorization: "Bearer " + token } });
-    if (!rMeta.ok) throw new Error('No se encontro "' + nombreBuscado + '" (' + etiqueta + '), ni en el Team compartido, ni en "Compartido conmigo", ni en tu OneDrive (codigo ' + rMeta.status + '). Verifica que el archivo este en el Team configurado (CONFIG_ONEDRIVE.grupoId) y que el nombre en CONFIG_ONEDRIVE.archivos.' + etiqueta + ' sea exactamente igual.');
-    meta = await rMeta.json();
+  if (metaDirecta) return metaDirecta;
+  const rMeta = await fetch(metaUrl, { headers: { Authorization: "Bearer " + token } });
+  if (!rMeta.ok) throw new Error('No se encontro "' + nombreBuscado + '" (' + etiqueta + '), ni en el Team compartido, ni en "Compartido conmigo", ni en tu OneDrive (codigo ' + rMeta.status + '). Verifica que el archivo este en el Team configurado (CONFIG_ONEDRIVE.grupoId) y que el nombre en CONFIG_ONEDRIVE.archivos.' + etiqueta + ' sea exactamente igual.');
+  return await rMeta.json();
+}
+
+async function descargarArchivoGraph(token, nombreArchivo, etiqueta) {
+  const nombreBuscado = String(nombreArchivo).trim();
+
+  let meta = await resolverMetaArchivo(token, nombreBuscado, etiqueta);
+  if (!meta["@microsoft.graph.downloadUrl"]) {
+    // A veces, justo despues de mover/subir un archivo a una biblioteca,
+    // Microsoft tarda un instante en tener listo el enlace de descarga.
+    // Se espera un momento y se intenta una vez mas antes de fallar.
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    meta = await resolverMetaArchivo(token, nombreBuscado, etiqueta);
   }
   const downloadUrl = meta["@microsoft.graph.downloadUrl"];
-  if (!downloadUrl) throw new Error('No se recibio un enlace de descarga para "' + etiqueta + '" (' + (meta.name || nombreBuscado) + '). Revisa en OneDrive si ese archivo tiene activado "Restringir descarga" (Block download) y desactivalo.');
+  if (!downloadUrl) throw new Error('No se recibio un enlace de descarga para "' + etiqueta + '" (' + (meta.name || nombreBuscado) + '), incluso despues de reintentar. Revisa en OneDrive si ese archivo tiene activado "Restringir descarga" (Block download) y desactivalo.');
   let rArchivo;
   try {
     rArchivo = await fetch(downloadUrl);
