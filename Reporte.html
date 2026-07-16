@@ -207,18 +207,21 @@
 // arrastrar archivos (como hasta ahora); el boton "Conectar con
 // OneDrive" queda oculto.
 //
+// grupoId: el ID del Team de Microsoft Teams (grupo de Microsoft 365)
+// en cuya biblioteca de archivos (canal General) viven los 3 archivos.
+// Cualquier miembro del Team puede leerlos sin que se los compartan uno
+// por uno. Si se deja vacio, el reporte busca en "Compartido conmigo" /
+// OneDrive personal de quien inicia sesion.
+//
 // archivos.bancos / archivos.inventario / archivos.pdf: el NOMBRE
-// EXACTO de cada archivo (tal como aparece en OneDrive), no un enlace.
-// El reporte busca ese nombre dentro de "Compartido conmigo" en la
-// cuenta que inicia sesion (y si no aparece ahi, en su propio OneDrive).
-// Por eso el archivo debe estar compartido con la cuenta que va a usar
-// el boton "Conectar con OneDrive".
+// EXACTO de cada archivo (tal como aparece en el Team/OneDrive).
 // ============================================================
 const CONFIG_ONEDRIVE = {
   activo: true,
 
   clientId: "19c8d3e8-b452-42b4-af4e-2583a81ebf64",
   tenantId: "be3d91db-0d14-4178-adac-6d104011148b",
+  grupoId: "dcdf7db4-a265-43d3-85c4-c7a7ed9a1296",
 
   archivos: {
     bancos: "2026 - Conciliacion Bancaria.xlsx",
@@ -686,12 +689,12 @@ async function intentarAutocargar() {
 // de arrastrarlos, para que el reporte funcione igual en cualquier
 // computadora, celular o navegador. Ver CONFIG_ONEDRIVE arriba.
 //
-// Se busca cada archivo por NOMBRE dentro de "Compartido conmigo"
-// (/me/drive/sharedWithMe) de la cuenta que inicia sesion, y si no
-// aparece ahi, en su propio OneDrive. Esto es mas estable que decodificar
-// un enlace "Compartir": ese enlace puede comportarse de forma
-// inconsistente segun el tipo de permiso, mientras que "Compartido
-// conmigo" refleja el acceso real y permanente que ya tiene la cuenta.
+// Se busca cada archivo por NOMBRE, primero en la biblioteca de archivos
+// del Team configurado en CONFIG_ONEDRIVE.grupoId (recomendado: no depende
+// de compartir nada individualmente, solo de ser miembro del Team). Si no
+// hay grupoId configurado, cae a "Compartido conmigo"
+// (/me/drive/sharedWithMe) de la cuenta que inicia sesion, y si tampoco
+// aparece ahi, a su propio OneDrive.
 // ============================================================
 let msalInstance = null;
 if (CONFIG_ONEDRIVE.activo) {
@@ -772,43 +775,70 @@ async function resolverEnDrivePropio(token, nombreBuscado) {
   return null;
 }
 
-// Descarga un archivo de OneDrive a partir de su nombre. Prueba, en orden:
-// 1) "Compartido conmigo" (lo comparte otra persona con esta cuenta),
-// 2) una busqueda recursiva en el propio OneDrive (por si esta cuenta es
+// Busca el archivo directo en la biblioteca de archivos del Team (grupo de
+// Microsoft 365) configurado en CONFIG_ONEDRIVE.grupoId. No depende de que
+// a la cuenta se le comparta nada individualmente: basta con ser miembro
+// del Team. Es la via mas estable y se prueba primero cuando grupoId esta
+// configurado.
+async function resolverEnGrupo(token, nombreBuscado) {
+  if (!CONFIG_ONEDRIVE.grupoId) return null;
+  try {
+    const url = "https://graph.microsoft.com/v1.0/groups/" + CONFIG_ONEDRIVE.grupoId + "/drive/root:/" + encodeURIComponent(nombreBuscado) + ":?$select=id,name,@microsoft.graph.downloadUrl";
+    const r = await fetch(url, { headers: { Authorization: "Bearer " + token } });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch (e) {
+    console.warn('No se pudo buscar "' + nombreBuscado + '" en el Team compartido:', e);
+    return null;
+  }
+}
+
+// Descarga un archivo a partir de su nombre. Prueba, en orden:
+// 1) la biblioteca de archivos del Team (CONFIG_ONEDRIVE.grupoId), si esta configurado,
+// 2) "Compartido conmigo" (lo comparte otra persona con esta cuenta),
+// 3) una busqueda recursiva en el propio OneDrive (por si esta cuenta es
 //    duena o co-propietaria del archivo, en cualquier carpeta),
-// 3) como ultimo recurso, la raiz del propio OneDrive.
+// 4) como ultimo recurso, la raiz del propio OneDrive.
 // "etiqueta" (bancos/inventario/pdf) es solo para que los mensajes de error
 // digan cual de los 3 archivos fallo.
 async function descargarArchivoGraph(token, nombreArchivo, etiqueta) {
   const nombreBuscado = String(nombreArchivo).trim();
   let metaUrl = null;
+  let metaDirecta = await resolverEnGrupo(token, nombreBuscado);
 
-  try {
-    const compartidos = await listarCompartidoConmigo(token);
-    const item = compartidos.find(it => it.name && normaliza(it.name) === normaliza(nombreBuscado));
-    if (item && item.remoteItem && item.remoteItem.parentReference) {
-      const driveId = item.remoteItem.parentReference.driveId;
-      const itemId = item.remoteItem.id;
-      metaUrl = "https://graph.microsoft.com/v1.0/drives/" + driveId + "/items/" + itemId + "?$select=id,name,@microsoft.graph.downloadUrl";
+  if (!metaDirecta) {
+    try {
+      const compartidos = await listarCompartidoConmigo(token);
+      const item = compartidos.find(it => it.name && normaliza(it.name) === normaliza(nombreBuscado));
+      if (item && item.remoteItem && item.remoteItem.parentReference) {
+        const driveId = item.remoteItem.parentReference.driveId;
+        const itemId = item.remoteItem.id;
+        metaUrl = "https://graph.microsoft.com/v1.0/drives/" + driveId + "/items/" + itemId + "?$select=id,name,@microsoft.graph.downloadUrl";
+      }
+    } catch (e) {
+      console.warn('No se pudo revisar "Compartido conmigo" para "' + nombreBuscado + '":', e);
     }
-  } catch (e) {
-    console.warn('No se pudo revisar "Compartido conmigo" para "' + nombreBuscado + '":', e);
   }
 
-  if (!metaUrl) {
+  if (!metaDirecta && !metaUrl) {
     const ubicacion = await resolverEnDrivePropio(token, nombreBuscado);
     if (ubicacion) {
       metaUrl = "https://graph.microsoft.com/v1.0/drives/" + ubicacion.driveId + "/items/" + ubicacion.itemId + "?$select=id,name,@microsoft.graph.downloadUrl";
     }
   }
 
-  if (!metaUrl) {
+  if (!metaDirecta && !metaUrl) {
     metaUrl = "https://graph.microsoft.com/v1.0/me/drive/root:/" + encodeURIComponent(nombreBuscado) + "?$select=id,name,@microsoft.graph.downloadUrl";
   }
 
-  const rMeta = await fetch(metaUrl, { headers: { Authorization: "Bearer " + token } });
-  if (!rMeta.ok) throw new Error('No se encontro "' + nombreBuscado + '" (' + etiqueta + '), ni en "Compartido conmigo" ni en tu OneDrive (codigo ' + rMeta.status + '). Verifica que el archivo este compartido con esta cuenta de Microsoft y que el nombre en CONFIG_ONEDRIVE.archivos.' + etiqueta + ' sea exactamente igual al de OneDrive.');
-  const meta = await rMeta.json();
+  let meta;
+  if (metaDirecta) {
+    meta = metaDirecta;
+  } else {
+    const rMeta = await fetch(metaUrl, { headers: { Authorization: "Bearer " + token } });
+    if (!rMeta.ok) throw new Error('No se encontro "' + nombreBuscado + '" (' + etiqueta + '), ni en el Team compartido, ni en "Compartido conmigo", ni en tu OneDrive (codigo ' + rMeta.status + '). Verifica que el archivo este en el Team configurado (CONFIG_ONEDRIVE.grupoId) y que el nombre en CONFIG_ONEDRIVE.archivos.' + etiqueta + ' sea exactamente igual.');
+    meta = await rMeta.json();
+  }
   const downloadUrl = meta["@microsoft.graph.downloadUrl"];
   if (!downloadUrl) throw new Error('No se recibio un enlace de descarga para "' + etiqueta + '" (' + (meta.name || nombreBuscado) + '). Revisa en OneDrive si ese archivo tiene activado "Restringir descarga" (Block download) y desactivalo.');
   let rArchivo;
