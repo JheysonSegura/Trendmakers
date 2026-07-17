@@ -839,12 +839,14 @@ async function resolverMetaArchivo(token, nombreBuscado, etiqueta) {
 async function descargarArchivoGraph(token, nombreArchivo, etiqueta) {
   const nombreBuscado = String(nombreArchivo).trim();
 
+  // A veces, justo despues de mover/subir un archivo a una biblioteca,
+  // Microsoft tarda unos segundos (a veces mas) en tener listo el enlace de
+  // descarga. Se reintenta varias veces, esperando cada vez un poco mas,
+  // antes de darse por vencido.
+  const ESPERAS_REINTENTO_MS = [2000, 3000, 4000, 5000];
   let meta = await resolverMetaArchivo(token, nombreBuscado, etiqueta);
-  if (!meta["@microsoft.graph.downloadUrl"]) {
-    // A veces, justo despues de mover/subir un archivo a una biblioteca,
-    // Microsoft tarda un instante en tener listo el enlace de descarga.
-    // Se espera un momento y se intenta una vez mas antes de fallar.
-    await new Promise(resolve => setTimeout(resolve, 2000));
+  for (let i = 0; !meta["@microsoft.graph.downloadUrl"] && i < ESPERAS_REINTENTO_MS.length; i++) {
+    await new Promise(resolve => setTimeout(resolve, ESPERAS_REINTENTO_MS[i]));
     meta = await resolverMetaArchivo(token, nombreBuscado, etiqueta);
   }
   const downloadUrl = meta["@microsoft.graph.downloadUrl"];
