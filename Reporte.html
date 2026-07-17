@@ -874,11 +874,14 @@ async function cargarDesdeOneDrive(interactivo) {
   try {
     const token = await obtenerTokenGraph(interactivo);
     mostrarEstadoOneDrive("Descargando archivos desde OneDrive...");
-    const [bancos, inventario, pdf] = await Promise.all([
-      descargarArchivoGraph(token, CONFIG_ONEDRIVE.archivos.bancos, "bancos"),
-      descargarArchivoGraph(token, CONFIG_ONEDRIVE.archivos.inventario, "inventario"),
-      descargarArchivoGraph(token, CONFIG_ONEDRIVE.archivos.pdf, "pdf"),
-    ]);
+    // Se descargan uno por uno (no en paralelo): pedir los 3 al mismo tiempo
+    // parece hacer que Microsoft Graph, bajo carga concurrente sobre el mismo
+    // Team, a veces omita el enlace de descarga en alguno de los 3 (siempre
+    // uno distinto, de forma intermitente). Uno por uno es un poco mas lento
+    // pero evita esa condicion de carrera.
+    const bancos = await descargarArchivoGraph(token, CONFIG_ONEDRIVE.archivos.bancos, "bancos");
+    const inventario = await descargarArchivoGraph(token, CONFIG_ONEDRIVE.archivos.inventario, "inventario");
+    const pdf = await descargarArchivoGraph(token, CONFIG_ONEDRIVE.archivos.pdf, "pdf");
 
     const wbBancos = XLSX.read(bancos.buf, { type: "array", cellDates: true });
     const wbInv = XLSX.read(inventario.buf, { type: "array", cellDates: true });
