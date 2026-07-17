@@ -779,87 +779,73 @@ async function resolverEnDrivePropio(token, nombreBuscado) {
 // Microsoft 365) configurado en CONFIG_ONEDRIVE.grupoId. No depende de que
 // a la cuenta se le comparta nada individualmente: basta con ser miembro
 // del Team. Es la via mas estable y se prueba primero cuando grupoId esta
-// configurado.
+// configurado. Devuelve la URL de "/content" (para descargar directo, sin
+// pasar por el campo @microsoft.graph.downloadUrl) o null si no se encuentra.
 async function resolverEnGrupo(token, nombreBuscado) {
   if (!CONFIG_ONEDRIVE.grupoId) return null;
   try {
-    const url = "https://graph.microsoft.com/v1.0/groups/" + CONFIG_ONEDRIVE.grupoId + "/drive/root:/" + encodeURIComponent(nombreBuscado) + ":?$select=id,name,@microsoft.graph.downloadUrl";
-    const r = await fetch(url, { headers: { Authorization: "Bearer " + token } });
+    const base = "https://graph.microsoft.com/v1.0/groups/" + CONFIG_ONEDRIVE.grupoId + "/drive/root:/" + encodeURIComponent(nombreBuscado) + ":";
+    const r = await fetch(base + "?$select=id,name", { headers: { Authorization: "Bearer " + token } });
     if (!r.ok) return null;
-    return await r.json();
+    const meta = await r.json();
+    return { nombre: meta.name, contentUrl: base + "/content" };
   } catch (e) {
     console.warn('No se pudo buscar "' + nombreBuscado + '" en el Team compartido:', e);
     return null;
   }
 }
 
-// Descarga un archivo a partir de su nombre. Prueba, en orden:
+// Busca la URL de contenido de un archivo por nombre. Prueba, en orden:
 // 1) la biblioteca de archivos del Team (CONFIG_ONEDRIVE.grupoId), si esta configurado,
 // 2) "Compartido conmigo" (lo comparte otra persona con esta cuenta),
 // 3) una busqueda recursiva en el propio OneDrive (por si esta cuenta es
 //    duena o co-propietaria del archivo, en cualquier carpeta),
 // 4) como ultimo recurso, la raiz del propio OneDrive.
+// Usa siempre el endpoint "/content" (con el token en el header) en vez del
+// campo @microsoft.graph.downloadUrl, que en este tenant a veces no llega.
 // "etiqueta" (bancos/inventario/pdf) es solo para que los mensajes de error
 // digan cual de los 3 archivos fallo.
-async function resolverMetaArchivo(token, nombreBuscado, etiqueta) {
-  let metaUrl = null;
-  let metaDirecta = await resolverEnGrupo(token, nombreBuscado);
+async function resolverContenidoArchivo(token, nombreBuscado, etiqueta) {
+  const directo = await resolverEnGrupo(token, nombreBuscado);
+  if (directo) return directo;
 
-  if (!metaDirecta) {
-    try {
-      const compartidos = await listarCompartidoConmigo(token);
-      const item = compartidos.find(it => it.name && normaliza(it.name) === normaliza(nombreBuscado));
-      if (item && item.remoteItem && item.remoteItem.parentReference) {
-        const driveId = item.remoteItem.parentReference.driveId;
-        const itemId = item.remoteItem.id;
-        metaUrl = "https://graph.microsoft.com/v1.0/drives/" + driveId + "/items/" + itemId + "?$select=id,name,@microsoft.graph.downloadUrl";
-      }
-    } catch (e) {
-      console.warn('No se pudo revisar "Compartido conmigo" para "' + nombreBuscado + '":', e);
+  try {
+    const compartidos = await listarCompartidoConmigo(token);
+    const item = compartidos.find(it => it.name && normaliza(it.name) === normaliza(nombreBuscado));
+    if (item && item.remoteItem && item.remoteItem.parentReference) {
+      const driveId = item.remoteItem.parentReference.driveId;
+      const itemId = item.remoteItem.id;
+      return { nombre: item.name, contentUrl: "https://graph.microsoft.com/v1.0/drives/" + driveId + "/items/" + itemId + "/content" };
     }
+  } catch (e) {
+    console.warn('No se pudo revisar "Compartido conmigo" para "' + nombreBuscado + '":', e);
   }
 
-  if (!metaDirecta && !metaUrl) {
-    const ubicacion = await resolverEnDrivePropio(token, nombreBuscado);
-    if (ubicacion) {
-      metaUrl = "https://graph.microsoft.com/v1.0/drives/" + ubicacion.driveId + "/items/" + ubicacion.itemId + "?$select=id,name,@microsoft.graph.downloadUrl";
-    }
+  const ubicacion = await resolverEnDrivePropio(token, nombreBuscado);
+  if (ubicacion) {
+    return { nombre: nombreBuscado, contentUrl: "https://graph.microsoft.com/v1.0/drives/" + ubicacion.driveId + "/items/" + ubicacion.itemId + "/content" };
   }
 
-  if (!metaDirecta && !metaUrl) {
-    metaUrl = "https://graph.microsoft.com/v1.0/me/drive/root:/" + encodeURIComponent(nombreBuscado) + "?$select=id,name,@microsoft.graph.downloadUrl";
-  }
-
-  if (metaDirecta) return metaDirecta;
-  const rMeta = await fetch(metaUrl, { headers: { Authorization: "Bearer " + token } });
+  const urlRaiz = "https://graph.microsoft.com/v1.0/me/drive/root:/" + encodeURIComponent(nombreBuscado) + ":";
+  const rMeta = await fetch(urlRaiz + "?$select=id,name", { headers: { Authorization: "Bearer " + token } });
   if (!rMeta.ok) throw new Error('No se encontro "' + nombreBuscado + '" (' + etiqueta + '), ni en el Team compartido, ni en "Compartido conmigo", ni en tu OneDrive (codigo ' + rMeta.status + '). Verifica que el archivo este en el Team configurado (CONFIG_ONEDRIVE.grupoId) y que el nombre en CONFIG_ONEDRIVE.archivos.' + etiqueta + ' sea exactamente igual.');
-  return await rMeta.json();
+  const meta = await rMeta.json();
+  return { nombre: meta.name, contentUrl: urlRaiz + "/content" };
 }
 
 async function descargarArchivoGraph(token, nombreArchivo, etiqueta) {
   const nombreBuscado = String(nombreArchivo).trim();
+  const { nombre, contentUrl } = await resolverContenidoArchivo(token, nombreBuscado, etiqueta);
 
-  // A veces, justo despues de mover/subir un archivo a una biblioteca,
-  // Microsoft tarda unos segundos (a veces mas) en tener listo el enlace de
-  // descarga. Se reintenta varias veces, esperando cada vez un poco mas,
-  // antes de darse por vencido.
-  const ESPERAS_REINTENTO_MS = [2000, 3000, 4000, 5000];
-  let meta = await resolverMetaArchivo(token, nombreBuscado, etiqueta);
-  for (let i = 0; !meta["@microsoft.graph.downloadUrl"] && i < ESPERAS_REINTENTO_MS.length; i++) {
-    await new Promise(resolve => setTimeout(resolve, ESPERAS_REINTENTO_MS[i]));
-    meta = await resolverMetaArchivo(token, nombreBuscado, etiqueta);
-  }
-  const downloadUrl = meta["@microsoft.graph.downloadUrl"];
-  if (!downloadUrl) throw new Error('No se recibio un enlace de descarga para "' + etiqueta + '" (' + (meta.name || nombreBuscado) + '), incluso despues de reintentar. Revisa en OneDrive si ese archivo tiene activado "Restringir descarga" (Block download) y desactivalo.');
   let rArchivo;
   try {
-    rArchivo = await fetch(downloadUrl);
+    rArchivo = await fetch(contentUrl, { headers: { Authorization: "Bearer " + token } });
   } catch (e) {
-    throw new Error('No se pudo descargar "' + etiqueta + '" (' + meta.name + '): ' + e.message + ' (posible bloqueo de CORS o de red).');
+    throw new Error('No se pudo descargar "' + etiqueta + '" (' + nombre + '): ' + e.message + ' (posible bloqueo de CORS o de red).');
   }
-  if (!rArchivo.ok) throw new Error('Fallo la descarga de "' + etiqueta + '" (' + meta.name + '), codigo ' + rArchivo.status + ' ' + rArchivo.statusText + '.');
+  if (!rArchivo.ok) throw new Error('Fallo la descarga de "' + etiqueta + '" (' + nombre + '), codigo ' + rArchivo.status + ' ' + rArchivo.statusText + '.');
   const buf = await rArchivo.arrayBuffer();
-  return { nombre: meta.name, buf };
+  return { nombre: nombre, buf };
 }
 
 // interactivo=true: si hace falta, abre el popup de login de Microsoft.
